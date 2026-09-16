@@ -1,0 +1,10 @@
+{
+  "count":5,
+  "selection_seed":20260915,
+  "seeds":[20260915,20260916,20260917,20260918,20260919],
+  "bindings":[{
+    "task":"edit_dual", "semantic_mode":"reference", "source_id":"my-dataset",
+    "root":"/path/to/data", "manifest":"/path/to/data/metadata.jsonl",
+    "prompt_field":"prompt", "input_fields":["ref1","ref2"], "target_field":"target"
+  }]
+}

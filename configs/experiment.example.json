@@ -1,0 +1,17 @@
+{
+  "suite_dir": "/path/to/project/state/suites/my-suite-v1",
+  "models": [{
+    "id": "anima-v7-epoch-1", "family": "anima", "backend": "anima_v7",
+    "tasks": ["edit_dual", "edit_single", "t2i"],
+    "checkpoint": "/path/to/anima-v7.runtime.safetensors",
+    "text_encoder": "/path/to/qwen_3_06b_base.safetensors",
+    "vae": "/path/to/qwen_image_vae.safetensors",
+    "runtime_dir": "/path/to/ComfyUI-Anima-Native-Context",
+    "runtime_options": {"offload_mode": "balanced", "attn_mode": "torch", "vae_chunk_size": 0, "vae_disable_cache": false}
+  }],
+  "profiles": {"anima": {
+    "edit_dual": {"width":1024,"height":1024,"resolution_policy":"target_aspect","target_pixels":1048576,"steps":30,"guidance_scale":3.5,"flow_shift":5.0,"negative_prompt":"","native_reference_scale":1.0,"reference_max_area":1048576},
+    "edit_single": {"width":1024,"height":1024,"resolution_policy":"target_aspect","target_pixels":1048576,"steps":30,"guidance_scale":3.5,"flow_shift":5.0,"negative_prompt":"","native_reference_scale":1.4,"reference_max_area":1048576},
+    "t2i": {"width":1024,"height":1024,"steps":30,"guidance_scale":3.5,"flow_shift":5.0,"negative_prompt":""}
+  }}
+}

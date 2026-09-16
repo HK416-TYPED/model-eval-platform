@@ -1,0 +1,6 @@
+{
+  "dataset_id":"background-edit-500", "source":"hf", "format":"webdataset",
+  "repo":"LAXMAYDAY/anime_background_edit_data_webdataset",
+  "revision":"ce9f667194349909643c5861eea44e0471f9d9f3",
+  "filename":"train-00000-of-00010.tar", "count":500, "selection_seed":20260915
+}

@@ -1,0 +1,9 @@
+{
+  "id":"quality-model",
+  "version":"replace-with-immutable-model-version",
+  "transport":"python",
+  "module_path":"/path/to/your_scorer.py",
+  "rubric":{"dimensions":["instruction_following","character_preservation","visual_quality"]},
+  "parameters":{},
+  "uses_target":false
+}

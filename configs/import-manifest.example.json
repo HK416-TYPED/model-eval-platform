@@ -1,0 +1,6 @@
+{
+  "dataset_id":"my-dual-data-v1", "source":"manifest", "format":"manifest",
+  "manifest_path":"/path/to/data/metadata.jsonl", "root":"/path/to/data",
+  "task":"edit_dual", "semantic_mode":"reference", "input_fields":["ref1","ref2"],
+  "prompt_field":"prompt", "target_field":"target", "count":5, "selection_seed":20260915
+}

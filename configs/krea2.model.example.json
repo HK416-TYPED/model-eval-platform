@@ -1,0 +1,12 @@
+{
+  "id":"krea2-raw-baseline",
+  "family":"krea2",
+  "backend":"krea2_official",
+  "python":"/path/to/krea2-python312-env/bin/python",
+  "tasks":["t2i"],
+  "checkpoint":"/path/to/krea2-official-raw.safetensors",
+  "text_encoder":"/path/to/Qwen3-VL-4B-Instruct-local-snapshot",
+  "vae":"/path/to/Qwen-Image-diffusers-vae-directory",
+  "runtime_dir":"/path/to/krea2-official",
+  "runtime_options":{}
+}

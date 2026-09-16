@@ -1,0 +1,6 @@
+{
+  "dataset_id":"character-3600plus-500", "source":"hf", "format":"character_tar",
+  "repo":"LAXMAYDAY/Anime_Character_Transfer_and_Reference_Dataset_3600plus",
+  "revision":"0ea55290679bf8e80bfac6f2a5b6a58cdc321680",
+  "filename":"data/train-00003-of-00004.tar", "count":500, "selection_seed":20260915
+}

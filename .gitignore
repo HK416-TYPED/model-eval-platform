@@ -1,0 +1,11 @@
+.venv*/
+state/
+vendor/
+__pycache__/
+*.egg-info/
+*.log
+.env
+dist/
+build/
+configs/autodl-*.json
+configs/local-*.json
