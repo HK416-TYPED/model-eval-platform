@@ -47,26 +47,74 @@ ssh -N -L 8765:127.0.0.1:8765 -p YOUR_PORT root@YOUR_HOST
 | 来源 | 内容 |
 |---|---|
 | HF 完整 TAR | 指定仓库、revision 和分片；留空文件名时选最小 TAR。完整下载并校验大小及 HF LFS SHA256 后抽样。 |
-| 服务器 / 上传 TAR | 使用服务器路径，或上传 ≤8 GiB 的 TAR。角色格式另需配套 JSONL 清单。 |
+| 服务器 / 上传 TAR | 使用服务器路径，或上传 ≤8 GiB 的 TAR。包内提供 JSONL 清单或每个样本一个 JSON，也可指定外部 JSONL。 |
 | JSONL + 图片目录 | 自定义文本字段、输入字段顺序、目标字段和服务器图片根目录；目标图可选。 |
 
-JSONL 每行必须有唯一 `id`。图片路径相对声明的根目录，不允许越界：
+### 数据格式范例
+
+数据源不限定仓库或图片内容。先按输入数量选择任务结构，再映射数据中的字段名；目标图可选，仅用于对照。JSONL 每行必须有唯一 `id`，图片路径相对声明的图片根目录或 TAR 根目录，不允许越界。
+
+| 任务结构 | `task` | `input_fields` 示例 |
+|---|---|---|
+| 仅 Prompt | `t2i` | `[]` |
+| 单参考图 + Prompt | `edit_single` | `["source"]` |
+| 双参考图 + Prompt | `edit_dual` | `["source", "reference"]` |
+
+双参考图样本（单行 JSONL）：
 
 ```json
-{"id":"sample-1","prompt":"原始编辑指令","ref1":"images/a.png","ref2":"images/b.png","target":"images/target.png"}
+{"id":"sample-1","prompt":"原始编辑指令","source":"images/a.png","reference":"images/b.png","target":"images/target.png"}
 ```
 
-### 两个完整分片的可复现导入
+单参考图样本：
+
+```json
+{"id":"sample-1","prompt":"原始编辑指令","source":"images/a.png"}
+```
+
+仅 Prompt 样本：
+
+```json
+{"id":"sample-1","prompt":"A mountain lake at sunrise."}
+```
+
+`prompt_field` 指定文本字段，`input_fields` 的排列顺序就是模型接收图片的顺序。`target_field` 设为 `"target"` 时读取对照图，留空字符串则忽略目标图。字段名可以替换成自己数据中的名称。导入后先预览配对，再冻结测试套件；平台不会仅凭文件名猜测图片语义。
+
+### 通用导入配置
+
+以 Hugging Face 上的 TAR 为例，将下面内容保存为 `configs/my-import.json`，替换仓库、revision、分片路径和字段映射。TAR 内可放 `metadata.jsonl` 与对应图片，或每个样本一个 JSON；HF 仓库根目录的 `metadata.jsonl` 也会自动读取。
+
+```json
+{
+  "dataset_id": "my-eval-data-v1",
+  "source": "hf",
+  "format": "tar",
+  "repo": "YOUR_ORG/YOUR_DATASET",
+  "revision": "YOUR_COMMIT_SHA",
+  "filename": "data/train-00000.tar",
+  "task": "edit_dual",
+  "input_fields": ["source", "reference"],
+  "prompt_field": "prompt",
+  "target_field": "target",
+  "count": 100,
+  "selection_seed": 42
+}
+```
+
+公开仓库可直接导入；受限仓库在命令末尾加 `--ask-token`，按提示输入令牌：
 
 ```bash
-python tools/import_dataset.py configs/import-character.example.json --ask-token
-python tools/import_dataset.py configs/import-background.example.json --ask-token
+python tools/import_dataset.py configs/my-import.json
 ```
 
-- 角色：`LAXMAYDAY/Anime_Character_Transfer_and_Reference_Dataset_3600plus`，`data/train-00003-of-00004.tar`，500 组双参考图 + 目标图。
-- 背景：`LAXMAYDAY/anime_background_edit_data_webdataset`，`train-00000-of-00010.tar`，500 对源图 + 目标图。
+其他来源保留任务与字段映射，按以下规则替换来源参数：
 
-示例锁定 revision 与抽样种子 `20260915`。按 SHA256 排序选取完整样本，排除缺失目标图、invalid 标记、空文本、损坏图片和重复配对；不足指定数量会失败。原始指令不改写。下载中断保留 `.partial`，重新提交同一分片可继续下载。
+| 来源 | 配置调整 |
+|---|---|
+| 本地 TAR | `source` 改为 `"local_tar"`，保留 `format: "tar"`；用 `archive_path: "/path/to/data.tar"` 替换 `repo`、`revision`、`filename`，外部清单可用 `manifest_path` 指定。 |
+| 本地 JSONL + 图片 | `source` 和 `format` 均改为 `"manifest"`；用 `manifest_path: "/path/to/metadata.jsonl"`、`root: "/path/to/data"` 替换 HF 来源参数。完整配置见 `configs/import-manifest.example.json`。 |
+
+需要复现抽样时，固定数据版本、分片、字段映射、抽样数量和 `selection_seed`；建议将 HF `revision` 指定为提交 SHA。平台按确定性 SHA256 排序抽样，校验任务所需输入、文本与图片，不足指定数量时失败；通用格式不要求每条样本都有目标图。原始指令不改写。HF 下载中断保留 `.partial`，重新提交同一分片可继续下载。
 
 `state/downloads/` 保存完整分片，`state/datasets/<id>/` 保存清单、图像、预览及校验值。相同图像按内容去重，因此文件数可能少于「样本数 × 每组图片数」。
 
@@ -131,27 +179,8 @@ python tools/build_source_release.py
 
 以后上传 GitHub 时，解压源码 ZIP，在解压目录初始化 Git，再推送到自己的仓库。本工具不会创建或推送远程仓库。第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。原始项目代码尚未指定开源许可证。
 
-## v0.2 通用数据导入
+## 兼容性
 
-先选择数据来源，再选择任务结构：双参考图 + Prompt、单参考图 + Prompt、仅 Prompt。目标图可选，仅用于对照。类别不限制图片内容。
-
-- TAR：包内可放一个 JSONL 清单，或每个样本一个 JSON；也可提供外部 JSONL。HF 仓库根目录的 `metadata.jsonl` 会自动读取。
-- JSONL：每行包含唯一 `id`、文本字段，以及任务所需的 0 / 1 / 2 个输入图路径。纯文本任务不需要图片目录。
-- 字段名可配置，输入图字段的顺序就是模型接收的顺序。图片路径相对图片根目录或 TAR 根目录；目标图字段留空则忽略目标图。
-- 导入后预览配对，再冻结测试套件。不会仅凭文件名猜测图片的语义或内容类型。
-
-例如双参考图样本可写为（将输入字段设为 `source,reference`、文本字段设为 `instruction`、目标字段设为 `expected`）：
-
-```json
-{"id":"001","source":"images/a.png","reference":"images/b.png","expected":"images/target.png","instruction":"Apply the requested edit using the reference image."}
-```
-
-仅 Prompt 样本：
-
-```json
-{"id":"001","prompt":"A mountain lake at sunrise."}
-```
-
-既有 `character_tar` / `webdataset` API 配置继续兼容；新界面统一使用通用 `tar` 格式及独立任务字段。
+既有 `character_tar` / `webdataset` API 配置继续兼容；新数据建议使用上述通用 `tar` / `manifest` 格式与独立任务字段。
 
 导入的历史报告快照支持浏览、人工评语和重新导出，不支持从快照启动推理或追加 checkpoint。

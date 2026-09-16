@@ -174,8 +174,8 @@
       "sha256": "07c3716931703b837aa525dd7db7ee60cdcc0a198041d33944e70a9d2ff7ddcb"
     },
     "README.md": {
-      "bytes": 9728,
-      "sha256": "0b5788989ec9a591de36ad6d95f441abbfae1dbe46a8c71ed2c458ca52ae7c96"
+      "bytes": 10619,
+      "sha256": "604ec41d428bcbabe87c6d581df4ccb1ea13e36743d53addc9a1cf0da62ee35f"
     },
     "tests/__init__.py": {
       "bytes": 45,
