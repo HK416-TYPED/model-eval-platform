@@ -23,8 +23,8 @@ HF_ORIGIN = 'https://huggingface.co'
 
 def validate_import(spec):
     safe_id(spec['dataset_id'])
-    if spec.get('format') not in {*FORMATS, 'manifest'}:
-        raise ValueError('请选择角色 TAR、背景 WebDataset 或 JSONL 清单格式')
+    if spec.get('format') not in {*FORMATS, 'manifest', 'tar'}:
+        raise ValueError('请选择 TAR 或 JSONL 清单格式')
     if type(spec.get('count', 500)) is not int or not 1 <= spec.get('count', 500) <= 5000:
         raise ValueError('样本数应为 1-5000')
     if type(spec.get('selection_seed', 20260915)) is not int:
@@ -40,11 +40,13 @@ def validate_import(spec):
         raise ValueError('JSONL 来源与格式必须同时选择')
     if spec.get('source')=='local_tar' and not spec.get('archive_path'):
         raise ValueError('请指定 TAR 路径')
-    if spec.get('source')=='manifest':
+    if spec.get('source')=='manifest' or spec.get('format')=='tar':
         from .core import TASK_INPUTS
         if spec.get('task') not in TASK_INPUTS:raise ValueError('请选择任务类型')
         if len(spec.get('input_fields',[]))!=TASK_INPUTS[spec['task']]:raise ValueError('输入字段数量与任务不符')
-        if not spec.get('manifest_path') or not spec.get('root'):raise ValueError('请填写 JSONL 路径和图片根目录')
+    if spec.get('source')=='manifest':
+        if not spec.get('manifest_path'):raise ValueError('请填写 JSONL 路径')
+        if spec['task']!='t2i' and not spec.get('root'):raise ValueError('请填写图片根目录')
 
 
 def _hf_info(repo, token, revision=None):
@@ -134,13 +136,14 @@ def fetch_archive(state, spec, token, progress):
                   'archive_sha256': archive['sha256'], 'archive_bytes': archive['bytes'],
                   'transport': 'https://huggingface.co (official endpoint)', 'complete_archive': True}
     manifest = None
-    if spec['format'] == 'character_tar':
+    if spec['format'] in {'character_tar','tar'}:
         matches = [e for e in entries if e['rfilename'] == 'metadata.jsonl']
-        if not matches:
+        if not matches and spec['format']=='character_tar':
             raise ValueError('角色 TAR 仓库缺少 metadata.jsonl')
-        metadata = download_file(spec['repo'], info['sha'], matches[0], root/'metadata.jsonl', token, progress)
-        manifest = metadata['path']
-        provenance['metadata_sha256'] = metadata['sha256']
+        if matches:
+            metadata = download_file(spec['repo'], info['sha'], matches[0], root/'metadata.jsonl', token, progress)
+            manifest = metadata['path']
+            provenance['metadata_sha256'] = metadata['sha256']
     write_json(root/(Path(entry['rfilename']).name+'.verified.json'), provenance)
     return Path(archive['path']), manifest, provenance
 
@@ -238,6 +241,59 @@ def _store_image(root, raw, suffix):
             'preview': 'previews/'+sha+'.webp'}
 
 
+def _generic_candidates(tf, members, spec, manifest):
+    """Task and field mapping are independent of a dataset's subject matter."""
+    rows=[];rejected=Counter();candidates=[]
+    if manifest:
+        with open(manifest,encoding='utf-8-sig') as stream:
+            rows=[(json.loads(line),'') for line in stream if line.strip()]
+    else:
+        manifests=[n for n in members if n.endswith('.jsonl')]
+        if len(manifests)>1:raise ValueError('TAR 内有多个 JSONL，请提供明确的配套清单')
+        if manifests:
+            name=manifests[0];parent=str(PurePosixPath(name).parent)
+            rows=[(json.loads(line),parent) for line in _member_bytes(tf,members,name).decode('utf-8-sig').splitlines() if line.strip()]
+        else:
+            rows=[(json.loads(_member_bytes(tf,members,n,2*1024**2)),str(PurePosixPath(n).parent)) for n in sorted(members) if n.endswith('.json')]
+    if not rows:raise ValueError('TAR 中未找到 JSONL / 样本 JSON，请提供配套 JSONL 字段清单')
+    def resolve(value,parent):
+        if not isinstance(value,str) or not value:raise ValueError('图片路径必须是非空字符串')
+        path=PurePosixPath(value)
+        if path.is_absolute() or '..' in path.parts or '\\' in value:raise ValueError('清单包含不安全路径')
+        options={value,str(PurePosixPath(parent)/value),'train/'+value}
+        found=[n for n in options if n in members]
+        if len(found)!=1:raise ValueError('图片路径不存在或有歧义: '+value)
+        return found[0]
+    for row,parent in rows:
+        try:
+            if row.get('invalid_pair'):raise ValueError('invalid_pair')
+            key=str(row['id']);fields=spec['input_fields']
+            # Compatibility aliases describe storage, never image subject matter.
+            values=[]
+            for i,field in enumerate(fields):
+                value=row.get(field)
+                if value is None and field in ('file_name','ref2_file_name'):
+                    value=row.get('ref'+str(i+1)+'_member')
+                    if value is None and 'edit_instruction' in row:value=key+'.ref'+str(i+1)+'.webp'
+                values.append(resolve(value,parent))
+            prompt_field=spec.get('prompt_field','prompt');prompt=row.get(prompt_field)
+            if prompt is None and prompt_field=='prompt':prompt=row.get('edit_instruction')
+            target_field=spec.get('target_field','target_file_name');target=row.get(target_field) if target_field else None
+            if target is None and target_field=='target_file_name':
+                target=row.get('target_member')
+                if target is None and key+'.target.webp' in members:target=key+'.target.webp'
+            target=resolve(target,parent) if target else None
+            prompt_member=row.get('prompt_member') or row.get('prompt_path')
+            if prompt_member:prompt_member=resolve(prompt_member,parent)
+            elif key+'.prompt.txt' in members:prompt_member=key+'.prompt.txt'
+            checksums=[row.get(field+'_sha256') or row.get('ref'+str(i+1)+'_sha256') for i,field in enumerate(fields)]
+            if target:checksums.append(row.get(target_field+'_sha256') or row.get('target_sha256'))
+            candidates.append({'id':key,'prompt':prompt,'refs':values,'target':target,'prompt_member':prompt_member,'checksums':checksums,'original':row})
+        except (KeyError,ValueError,TypeError) as error:rejected[str(error)[:120]]+=1
+    if len({c['id'] for c in candidates})!=len(candidates):raise ValueError('样本 ID 不唯一')
+    return candidates,rejected
+
+
 def _prune_unselected(root, records):
     keep=set()
     for row in records:
@@ -255,7 +311,9 @@ def extract_dataset(state, spec, archive, manifest=None, provenance=None, progre
     destination = root/safe_id(spec['dataset_id'])
     if destination.exists():
         raise FileExistsError('数据集 ID 已存在，请使用新的名称')
-    task, mode, input_count = FORMATS[spec['format']]
+    if spec['format']=='tar':
+        task=spec['task'];mode={'edit_dual':'reference','edit_single':'edit','t2i':'t2i'}[task];input_count=len(spec['input_fields'])
+    else:task, mode, input_count = FORMATS[spec['format']]
     provenance = provenance or {'archive_path': str(Path(archive).resolve()), 'archive_sha256': file_sha(archive),
                                 'archive_bytes': Path(archive).stat().st_size, 'complete_archive': True}
     temp = Path(tempfile.mkdtemp(prefix='.import-', dir=root))
@@ -266,7 +324,7 @@ def extract_dataset(state, spec, archive, manifest=None, provenance=None, progre
         progress(phase='scanning', selected=0, requested=wanted)
         with tarfile.open(archive, 'r:*') as tf:
             members = _tar_members(tf)
-            candidates, excluded = _candidates(tf, members, spec['format'], manifest)
+            candidates, excluded = _generic_candidates(tf,members,spec,manifest) if spec['format']=='tar' else _candidates(tf, members, spec['format'], manifest)
             candidates.sort(key=lambda c: (digest([seed, provenance['archive_sha256'], c['id']]), c['id']))
             seen = set()
             for candidate in candidates:
@@ -278,24 +336,28 @@ def extract_dataset(state, spec, archive, manifest=None, provenance=None, progre
                         if text.rstrip('\r\n') != candidate['prompt'].rstrip('\r\n'):
                             raise ValueError('prompt_metadata_mismatch')
                     assets = []
-                    for index, name in enumerate(candidate['refs']+[candidate['target']]):
+                    for index, name in enumerate(candidate['refs']+([candidate['target']] if candidate['target'] else [])):
                         raw = _member_bytes(tf, members, name)
+                        if spec['format']=='tar':
+                            declared=candidate['checksums'][index]
+                            if declared and hashlib.sha256(raw).hexdigest()!=declared:raise ValueError('image_sha256_mismatch')
                         if spec['format'] == 'webdataset':
                             declared = candidate['original'].get('ref1_sha256' if index == 0 else 'target_sha256')
                             if declared and hashlib.sha256(raw).hexdigest() != declared:
                                 raise ValueError('image_sha256_mismatch')
                         assets.append(_store_image(temp, raw, PurePosixPath(name).suffix))
-                    pair_key = digest([a['sha256'] for a in assets])
+                    pair_key = digest([candidate['prompt'],[a['sha256'] for a in assets]])
                     if pair_key in seen:
                         excluded['duplicate_pair'] += 1
                         continue
                     seen.add(pair_key)
+                    inputs=assets[:input_count];target=assets[-1] if candidate['target'] else None
                     row = {'id': candidate['id'], 'prompt': candidate['prompt'],
-                           **{f'input_{i}': a['path'] for i, a in enumerate(assets[:-1])},
-                           'target_file_name': assets[-1]['path']}
+                           **{f'input_{i}': a['path'] for i, a in enumerate(inputs)},
+                           **({'target_file_name':target['path']} if target else {})}
                     selected.append(row)
-                    case_records.append({'id': row['id'], 'prompt': row['prompt'], 'inputs': assets[:-1],
-                                         'target': assets[-1], 'source_record': candidate['original']})
+                    case_records.append({'id': row['id'], 'prompt': row['prompt'], 'inputs': inputs,
+                                         'target': target, 'source_record': candidate['original']})
                     if len(selected) % 10 == 0:
                         progress(phase='extracting', selected=len(selected), requested=wanted, candidates=len(candidates))
                     if len(selected) == wanted:
@@ -311,7 +373,7 @@ def extract_dataset(state, spec, archive, manifest=None, provenance=None, progre
                    'revision': provenance.get('revision'), 'root': str(destination.resolve()),
                    'manifest': str((destination/'metadata.jsonl').resolve()), 'prompt_field': 'prompt',
                    'input_fields': [f'input_{i}' for i in range(input_count)], 'target_field': 'target_file_name',
-                   'require_target': True, 'snapshot_note': f'{wanted} complete cases sampled from one verified TAR',
+                   'require_target': spec['format']!='tar', 'snapshot_note': f'{wanted} complete cases sampled from one verified TAR',
                    'archive_sha256': provenance['archive_sha256']}
         record = {'schema': 'eval-dataset/v1', 'id': spec['dataset_id'], 'status': 'ready', 'task': task,
                   'format': spec['format'], 'count': wanted, 'selection_seed': seed,
@@ -356,7 +418,9 @@ def import_manifest(state,spec,progress):
     root=Path(state)/'datasets';root.mkdir(parents=True,exist_ok=True)
     destination=root/safe_id(spec['dataset_id'])
     if destination.exists():raise FileExistsError('数据集 ID 已存在')
+    spec=dict(spec)
     manifest=Path(spec['manifest_path']);source_sha=file_sha(manifest)
+    spec['root']=spec.get('root') or str(manifest.resolve().parent)
     task=spec['task'];fields=spec['input_fields'];seed=spec.get('selection_seed',20260915);wanted=spec.get('count',500)
     binding={'task':task,'semantic_mode':spec.get('semantic_mode','t2i' if task=='t2i' else 'reference'),
              'source_id':spec['dataset_id'],'root':spec['root'],'input_fields':fields,

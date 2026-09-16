@@ -37,7 +37,11 @@ def main():
     s=sub.add_parser('report');s.add_argument('run_id');s.add_argument('--export',action='store_true');s.add_argument('--pdf',action='store_true')
     s=sub.add_parser('score');s.add_argument('run_id');s.add_argument('scorer')
     s=sub.add_parser('serve');s.add_argument('--port',type=int,default=8765)
-    args=p.parse_args();store=Store(args.state)
+    s.add_argument('--host',default='127.0.0.1');s.add_argument('--read-only',action='store_true')
+    args=p.parse_args()
+    if args.command=='serve' and args.host not in {'127.0.0.1','localhost','::1'} and not args.read_only:
+        p.error('Non-loopback serving requires --read-only; use an SSH tunnel for administration')
+    store=Store(args.state)
     if args.command in ('import-hf','import-wds'):
         from .datasets import import_hf_jsonl,import_webdataset
         value=(import_hf_jsonl if args.command=='import-hf' else import_webdataset)(read_json(args.binding),args.destination)
@@ -76,8 +80,11 @@ def main():
         with GpuLock(store.root,'cuda:0'):value=score_run(store,args.run_id,read_json(args.scorer))
     else:
         import uvicorn
-        from .web import create_app
-        uvicorn.run(create_app(store.root),host='127.0.0.1',port=args.port);return
+        if args.read_only:
+            from .public_readonly import create_public_app as create_app
+        else:
+            from .web import create_app
+        uvicorn.run(create_app(store.root),host=args.host,port=args.port);return
     print(json.dumps(value,ensure_ascii=False,indent=2))
     if args.command=='preflight' and not value['ready']:raise SystemExit(2)
 

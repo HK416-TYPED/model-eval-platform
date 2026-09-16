@@ -30,7 +30,7 @@ class DataLibrary(unittest.TestCase):
         tar=self.tar(invalid=True)
         a=extract_dataset(self.root,self.spec(),tar);b=extract_dataset(self.root,self.spec('repeat'),tar)
         self.assertEqual(a['count'],5);self.assertNotIn('0',a['selected_ids']);self.assertEqual(a['selected_ids'],b['selected_ids'])
-        records=[json.loads(l) for l in (self.root/'datasets/test/records.jsonl').read_text().splitlines()]
+        records=[json.loads(l) for l in (self.root/'datasets/test/records.jsonl').read_text(encoding='utf-8').splitlines()]
         self.assertEqual(len(records),5)
         for row in records:
             self.assertEqual(row['target']['dimensions'],[32,48]);self.assertEqual(len(row['inputs']),1)
@@ -80,7 +80,7 @@ class DataLibrary(unittest.TestCase):
         spec={'dataset_id':'generic','source':'manifest','format':'manifest','root':str(self.root),'manifest_path':str(rows),
               'task':'edit_dual','input_fields':['first','second'],'prompt_field':'instruction','target_field':'target','count':1}
         result=import_dataset(self.root,spec)
-        record=json.loads((self.root/'datasets/generic/records.jsonl').read_text())
+        record=json.loads((self.root/'datasets/generic/records.jsonl').read_text(encoding='utf-8'))
         self.assertEqual([a['dimensions'] for a in record['inputs']],[[64,32],[32,64]])
         self.assertEqual(result['count'],1);self.assertEqual(record['prompt'],'exact text')
     def test_credentials_only_travel_through_worker_stdin(self):
@@ -89,7 +89,7 @@ class DataLibrary(unittest.TestCase):
         process.stdin.close=lambda:None
         with patch('eval_platform.data_jobs.subprocess.Popen',return_value=process) as launch:
             job=start_import(self.root,self.spec(),token)
-        stored=(self.root/'data-jobs'/(job['id']+'.json')).read_text()
+        stored=(self.root/'data-jobs'/(job['id']+'.json')).read_text(encoding='utf-8')
         self.assertNotIn(token,stored);self.assertNotIn(token,str(launch.call_args));self.assertIn(token,process.stdin.getvalue().decode())
         with self.assertRaises(ValueError):start_import(self.root,{**self.spec('bad'),'token':token})
     def test_download_rejects_checksum_mismatch(self):

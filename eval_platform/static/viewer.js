@@ -1,0 +1,16 @@
+// Shared by the live console and self-contained HTML exports.
+(()=>{
+ const dialog=document.createElement('dialog');dialog.className='image-viewer';dialog.setAttribute('aria-label','图片比较查看器');
+ dialog.innerHTML='<div class="toolbar"><button data-close>关闭 (Esc)</button><button data-prev>上一张</button><button data-next>下一张</button><label><input type="checkbox" data-compare>并排比较参考图</label><a data-original target="_blank" rel="noopener">原图 ↗</a></div><p data-caption></p><div class="viewer-images"></div>';
+ document.body.append(dialog);let links=[],index=0,origin;
+ const hover=document.createElement('img');hover.className='hover-preview';hover.hidden=true;hover.alt='放大预览';document.body.append(hover);let timer;
+ const selector='.image-card[href],.compare-table a:has(img),.result-image,.refs a:has(img),.data-images a:has(img)';
+ function show(){const a=links[index],image=document.createElement('img');image.src=a.href;image.alt=a.querySelector('img')?.alt||'';const area=dialog.querySelector('.viewer-images');area.replaceChildren();const compare=dialog.querySelector('[data-compare]');compare.parentElement.hidden=!a.closest('section,article')?.querySelector('.refs a:has(img),.data-images a:has(img)');function add(im){const figure=document.createElement('figure'),caption=document.createElement('figcaption');caption.textContent=im.alt;figure.append(im,caption);area.append(figure)};if(dialog.querySelector('[data-compare]').checked){a.closest('section,article')?.querySelectorAll('.refs a:has(img),.data-images a:has(img)').forEach(ref=>{if(ref!==a){const im=document.createElement('img');im.src=ref.href;im.alt=ref.querySelector('img').alt;add(im)}})}add(image);dialog.querySelector('[data-caption]').textContent=(index+1)+' / '+links.length+' · '+image.alt;dialog.querySelector('[data-original]').href=a.href}
+ document.addEventListener('click',e=>{const a=e.target.closest(selector);if(!a||e.ctrlKey||e.metaKey||e.shiftKey)return;e.preventDefault();origin=a;links=[...document.querySelectorAll(selector)].filter(x=>x.getClientRects().length);index=links.indexOf(a);hover.hidden=true;clearTimeout(timer);show();dialog.showModal()});
+ dialog.querySelector('[data-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>origin?.focus());
+ function move(delta){index=(index+delta+links.length)%links.length;show()}
+ dialog.querySelector('[data-prev]').onclick=()=>move(-1);dialog.querySelector('[data-next]').onclick=()=>move(1);dialog.querySelector('[data-compare]').onchange=show;
+ dialog.addEventListener('keydown',e=>{if(e.key==='ArrowLeft'){e.preventDefault();move(-1)}if(e.key==='ArrowRight'){e.preventDefault();move(1)}});
+ document.addEventListener('pointerover',e=>{const a=e.target.closest(selector);if(!a||e.pointerType==='touch'||dialog.open)return;clearTimeout(timer);timer=setTimeout(()=>{hover.src=a.querySelector('img').src;hover.style.left=Math.max(8,Math.min(e.clientX+20,innerWidth-340))+'px';hover.style.top=Math.max(8,Math.min(e.clientY+15,innerHeight-340))+'px';hover.hidden=false},400)});
+ document.addEventListener('pointerout',()=>{clearTimeout(timer);hover.hidden=true});window.addEventListener('scroll',()=>{clearTimeout(timer);hover.hidden=true},true);
+})();

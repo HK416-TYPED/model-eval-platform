@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,SecretStr,Field
 from .core import BACKENDS,inside,read_json,safe_id,write_json
 from .store import Store
+from . import __version__
 
 class ConfigBody(BaseModel):
     name:str
@@ -21,6 +22,12 @@ class ModelBody(BaseModel):
 class ImportBody(BaseModel):
     spec:dict
     token:SecretStr|None=None
+class ReviewBody(BaseModel):
+    model_id:str
+    case_id:str
+    verdict:str
+    note:str=Field(default='',max_length=4000)
+    reviewer:str=Field(default='',max_length=80)
 class SuiteBody(BaseModel):
     name:str
     dataset_ids:list[str]
@@ -29,14 +36,17 @@ class SuiteBody(BaseModel):
     seeds:list[int]|None=None
 
 def create_app(state_root):
-    store=Store(state_root);app=FastAPI(title='Model Evaluation Platform',version='0.1.0')
+    store=Store(state_root);app=FastAPI(title='Model Evaluation Platform',version=__version__)
     configs=store.root/'configs';configs.mkdir(exist_ok=True)
     app.mount('/static', StaticFiles(directory=Path(__file__).parent/'static'), name='static')
     @app.middleware('http')
     async def local_origin(request:Request,call_next):
-        # Bound to loopback; reject browser cross-origin mutation attempts.
+        # Browser-controlled Fetch Metadata survives TLS/Host rewriting by a
+        # reverse proxy. Cross-site pages cannot forge this forbidden header.
+        # Older clients without it still require an exact Origin match.
         origin=request.headers.get('origin')
-        if request.method not in ('GET','HEAD','OPTIONS') and origin and origin!=str(request.base_url).rstrip('/'):
+        same_origin_fetch=request.headers.get('sec-fetch-site')=='same-origin'
+        if request.method not in ('GET','HEAD','OPTIONS') and origin and not same_origin_fetch and origin!=str(request.base_url).rstrip('/'):
             from fastapi.responses import JSONResponse
             return JSONResponse({'detail':'Cross-origin write denied'},status_code=403)
         return await call_next(request)
@@ -134,9 +144,25 @@ def create_app(state_root):
     def run(run_id:str):
         run_id=safe_id(run_id);p=store.root/'runs'/run_id/'progress.json'
         jobs=store.jobs(run_id)
+        from .review import summarize
         return {'summary':store.summary(run_id),'progress':read_json(p) if p.exists() else None,
+                'snapshot_only':bool(store.run(run_id)['spec'].get('snapshot_only')),
+                'analysis':summarize(jobs,store.reviews(run_id)),
                 'models':[{k:v for k,v in m.items() if k!='identity'} for m in store.run(run_id)['spec']['models']],
                 'jobs':[{k:v for k,v in j.items() if k!='request'} for j in jobs]}
+    @app.get('/api/runs/{run_id}/reviews')
+    def reviews(run_id:str):return store.reviews(safe_id(run_id))
+    @app.put('/api/runs/{run_id}/reviews')
+    def review(run_id:str,body:ReviewBody):
+        run_id=safe_id(run_id)
+        saved=store.save_review(run_id,body.model_id,body.case_id,body.verdict,body.note,body.reviewer)
+        # Export regenerates snapshots; saving a note never starts GPU inference.
+        return saved
+    @app.post('/api/runs/{run_id}/report')
+    def refresh_report(run_id:str):
+        from .report import build_report
+        run_id=safe_id(run_id);build_report(store,run_id)
+        return {'url':'/files/'+run_id+'/report/index.html'}
     @app.get('/api/configs')
     def list_configs():return {p.stem:read_json(p) for p in configs.glob('*.json')}
     @app.put('/api/configs')
@@ -157,12 +183,16 @@ def create_app(state_root):
     @app.post('/api/runs/{run_id}/start')
     def start(run_id:str,body:StartBody):
         from .cli import spawn_worker
+        if store.run(safe_id(run_id))['spec'].get('snapshot_only'):raise ValueError('这是导入的报告快照，仅供评审和导出')
         if body.limit is not None and body.limit<1:raise ValueError('limit must be positive')
         return spawn_worker(store.root,safe_id(run_id),body.limit,body.retry)
     @app.post('/api/runs/{run_id}/cancel')
-    def cancel(run_id:str):store.cancel(safe_id(run_id));return store.summary(run_id)
+    def cancel(run_id:str):
+        if store.run(safe_id(run_id))['spec'].get('snapshot_only'):raise ValueError('报告快照没有运行任务')
+        store.cancel(safe_id(run_id));return store.summary(run_id)
     @app.post('/api/runs/{run_id}/append')
     def append(run_id:str,body:ModelBody):
+        if store.run(safe_id(run_id))['spec'].get('snapshot_only'):raise ValueError('报告快照不支持追加推理')
         from .comparison import append_checkpoint
         from .worker import GpuLock
         with GpuLock(store.root,'cuda:0'):return append_checkpoint(store,safe_id(run_id),body.model)

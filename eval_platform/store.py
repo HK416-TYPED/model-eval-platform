@@ -24,6 +24,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS scores (
               id TEXT PRIMARY KEY, run_id TEXT NOT NULL, job_id TEXT NOT NULL,
               scorer TEXT NOT NULL, result TEXT NOT NULL, updated REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS reviews (
+              run_id TEXT NOT NULL, model_id TEXT NOT NULL, case_id TEXT NOT NULL,
+              verdict TEXT NOT NULL, note TEXT NOT NULL, reviewer TEXT NOT NULL,
+              updated REAL NOT NULL, PRIMARY KEY(run_id,model_id,case_id));
             ''')
 
     @contextmanager
@@ -87,3 +91,20 @@ class Store:
         with self.connect() as c:c.execute('UPDATE runs SET cancel=0 WHERE id=?',(run_id,))
 
     def cancelled(self, run_id):return bool(self.run(run_id)['cancel'])
+
+    def reviews(self, run_id):
+        self.run(run_id)
+        with self.connect() as c:
+            return [dict(r) for r in c.execute('SELECT * FROM reviews WHERE run_id=? ORDER BY model_id,case_id',(run_id,))]
+
+    def save_review(self, run_id, model_id, case_id, verdict, note='', reviewer=''):
+        from .review import VERDICTS
+        self.run(run_id)
+        if verdict not in VERDICTS:raise ValueError('未知评审结论')
+        if len(note)>4000 or len(reviewer)>80:raise ValueError('评语或评审人过长')
+        with self.connect() as c:
+            if not c.execute('SELECT 1 FROM jobs WHERE run_id=? AND model_id=? AND case_id=?',(run_id,model_id,case_id)).fetchone():
+                raise KeyError('实验中不存在该模型与案例')
+            c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?) ON CONFLICT(run_id,model_id,case_id) DO UPDATE SET verdict=excluded.verdict,note=excluded.note,reviewer=excluded.reviewer,updated=excluded.updated',
+                      (run_id,model_id,case_id,verdict,note,reviewer,time.time()))
+        return next(r for r in self.reviews(run_id) if r['model_id']==model_id and r['case_id']==case_id)

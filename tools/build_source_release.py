@@ -7,10 +7,10 @@ TOOLS={'start_server.py','audit_data_library.py','import_dataset.py','build_sour
 SECRET_PATTERNS=[rb'hf_[A-Za-z0-9]{20,}',rb'gh[pousr]_[A-Za-z0-9]{25,}',rb'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----']
 
 def source_files(root):
-    paths=[root/n for n in ['README.md','THIRD_PARTY_NOTICES.md','pyproject.toml','.gitignore']]
+    paths=[root/n for n in ['README.md','CHANGELOG.md','GITHUB_UPLOAD.md','THIRD_PARTY_NOTICES.md','pyproject.toml','.gitignore']]
     for path in (root/'eval_platform').rglob('*'):
-        if path.is_file() and '__pycache__' not in path.parts and (path.suffix in {'.py','.js','.css','.html','.ttc'} or path.name=='COPYRIGHT.wqy-microhei'):paths.append(path)
-    paths+=list((root/'tests').glob('test_*.py'))+list((root/'configs').glob('*.example.json'))
+        if path.is_file() and '__pycache__' not in path.parts and (path.suffix in {'.py','.js','.css','.html','.jsonl','.ttc'} or path.name=='COPYRIGHT.wqy-microhei'):paths.append(path)
+    paths+=list((root/'tests').glob('*.py'))+list((root/'configs').glob('*.example.json'))
     paths += [root/'tools'/n for n in TOOLS]
     for path in sorted(paths):
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):raise ValueError('Refusing linked source: '+str(path))
@@ -28,7 +28,7 @@ def build(root,destination):
     partial=destination.with_suffix('.partial')
     with zipfile.ZipFile(partial,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
         for name,raw in sorted(entries.items()):
-            info=zipfile.ZipInfo('model-eval-platform/'+name,date_time=(2026,9,15,0,0,0))
+            info=zipfile.ZipInfo('model-eval-platform/'+name,date_time=(2026,9,16,0,0,0))
             info.compress_type=zipfile.ZIP_DEFLATED;info.external_attr=0o644<<16
             archive.writestr(info,raw)
     with zipfile.ZipFile(partial) as archive:
@@ -41,5 +41,5 @@ def build(root,destination):
     print(json.dumps(result,ensure_ascii=False));return result
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--output',default=str(ROOT/'dist/model-eval-platform-source-20260915.zip'))
+    parser=argparse.ArgumentParser();parser.add_argument('--output',default=str(ROOT/'dist/model-eval-platform-v0.3.0-source.zip'))
     args=parser.parse_args();build(ROOT,args.output)

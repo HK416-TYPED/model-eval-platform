@@ -2,6 +2,18 @@
 
 使用固定案例、固定 seed 比较同一模型家族的不同 checkpoint。支持 Anima V7 文生图、单图编辑、双图参考；提供数据导入、GPU 后台任务、进度、HTML / PDF 报告和离线 ZIP。
 
+当前版本：**v0.3.0**。紧凑 HTML 报告支持 Seed 浏览与 Checkpoint 横向对比、搜索、分页和原图查看；PDF 使用紧凑五列布局，保留完整指令与复现附录。发布说明见 [CHANGELOG.md](CHANGELOG.md)，源码上传说明见 [GITHUB_UPLOAD.md](GITHUB_UPLOAD.md)。
+
+## 公网只读入口
+
+```bash
+python -m eval_platform.cli --state /path/to/state serve --read-only --host 0.0.0.0 --port 6008
+```
+
+只读入口可查看结果和下载已有 HTML / PDF，所有写请求均返回 403。管理入口继续使用 loopback 默认地址，通过 SSH 隧道访问。两入口可以共用同一状态目录。
+
+HTML 和 PDF 是独立生成的文件；更新模板或推理完成后，在管理侧执行 `python -m eval_platform.cli --state /path/to/state report RUN_ID --pdf`，同时刷新 HTML 与 PDF。PDF 下载采用版本参数，只读入口禁用 PDF 缓存。
+
 ## 快速启动
 
 控制台需要 Python ≥3.10；GPU 环境按外部运行时的要求准备。已验证的 Anima 环境为 Linux、Python 3.11、PyTorch 2.8 / CUDA 12.8。安装不会自动安装或替换 PyTorch。
@@ -118,3 +130,28 @@ python tools/build_source_release.py
 源码 ZIP 输出到 `dist/`，采用明确文件清单并生成 `SOURCE_MANIFEST.json` 与 SHA256。包含 Python 包、网页资源、测试、通用示例、文档和中文字体；排除状态数据库、凭据、服务器私有配置、数据、模型、运行时副本和缓存。
 
 以后上传 GitHub 时，解压源码 ZIP，在解压目录初始化 Git，再推送到自己的仓库。本工具不会创建或推送远程仓库。第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。原始项目代码尚未指定开源许可证。
+
+## v0.2 通用数据导入
+
+先选择数据来源，再选择任务结构：双参考图 + Prompt、单参考图 + Prompt、仅 Prompt。目标图可选，仅用于对照。类别不限制图片内容。
+
+- TAR：包内可放一个 JSONL 清单，或每个样本一个 JSON；也可提供外部 JSONL。HF 仓库根目录的 `metadata.jsonl` 会自动读取。
+- JSONL：每行包含唯一 `id`、文本字段，以及任务所需的 0 / 1 / 2 个输入图路径。纯文本任务不需要图片目录。
+- 字段名可配置，输入图字段的顺序就是模型接收的顺序。图片路径相对图片根目录或 TAR 根目录；目标图字段留空则忽略目标图。
+- 导入后预览配对，再冻结测试套件。不会仅凭文件名猜测图片的语义或内容类型。
+
+例如双参考图样本可写为（将输入字段设为 `source,reference`、文本字段设为 `instruction`、目标字段设为 `expected`）：
+
+```json
+{"id":"001","source":"images/a.png","reference":"images/b.png","expected":"images/target.png","instruction":"Apply the requested edit using the reference image."}
+```
+
+仅 Prompt 样本：
+
+```json
+{"id":"001","prompt":"A mountain lake at sunrise."}
+```
+
+既有 `character_tar` / `webdataset` API 配置继续兼容；新界面统一使用通用 `tar` 格式及独立任务字段。
+
+导入的历史报告快照支持浏览、人工评语和重新导出，不支持从快照启动推理或追加 checkpoint。

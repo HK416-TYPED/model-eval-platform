@@ -49,7 +49,11 @@ class PdfReports(unittest.TestCase):
             self.assertIn('未评分', text)
             for seed in range(101, 106):
                 self.assertIn('SEED '+str(seed), text)
-            self.assertTrue(any(page.images for page in pdf.pages))
+            case_page = next(page for page in pdf.pages if 'SEED 101' in page.extract_text())
+            for seed in range(101, 106):
+                self.assertIn('SEED '+str(seed), case_page.extract_text())
+            self.assertIn('输入 1', case_page.extract_text())
+            self.assertTrue(case_page.images)
             fonts = [font.get_object() for page in pdf.pages for font in page['/Resources']['/Font'].values()]
             self.assertTrue(any('/FontFile2' in font.get('/FontDescriptor', {}) for font in fonts))
             self.assertFalse(list(root.glob('*.partial')))
@@ -61,10 +65,25 @@ class PdfReports(unittest.TestCase):
             text = '\n'.join(page.extract_text() for page in pdf.pages)
             for index in range(4):
                 self.assertIn(f'checkpoint-{index}', text)
-            self.assertGreaterEqual(len(pdf.pages), 9)
-            self.assertEqual(text.count('EXPECTED-FAILURE'), 4)
+            # Pagination can become denser, but no checkpoint/seed may disappear.
+            self.assertGreater(len(pdf.pages), 1)
+            self.assertEqual(text.count('EXPECTED-FAILURE'), 8)  # case cells plus complete failure appendix
             for seed in range(101, 106):
                 self.assertEqual(text.count('SEED '+str(seed)), 4)
+
+    def test_two_single_checkpoint_cases_share_one_page(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);source=self.fixture(root);data=json.loads(source.read_text())
+            case=copy.deepcopy(data['suite']['cases'][0]);case['case_id']='case-2'
+            data['suite']['cases'].append(case)
+            data['jobs'] += [{**j,'id':j['id']+'-2','case_id':'case-2'} for j in list(data['jobs'])]
+            source.write_text(json.dumps(data),encoding='utf-8')
+            pdf=PdfReader(build_pdf(source))
+            pages=[page.extract_text() for page in pdf.pages if 'SEED 101' in page.extract_text()]
+            self.assertEqual(len(pages),1)
+            self.assertEqual(pages[0].count('SEED '),10)
+            self.assertIn('case-1',pages[0]);self.assertIn('case-2',pages[0])
 
 
 if __name__ == '__main__':
